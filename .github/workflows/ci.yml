@@ -1,135 +1,114 @@
-name: CI
+name: CrystalCastle CI/CD
 
 on:
   push:
-    branches: [main]
+    branches:
   pull_request:
+    branches:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  ai-test:
+  lint-test:
+    name: Lint & Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-      - name: Run Smoke Tests
-        run: |
-          mkdir -p tests/ai/results
-          pytest tests/test_smoke_generation.py \
-            --junitxml=tests/ai/results/smoke-results.xml
-      - name: Upload test results
-        uses: actions/upload-artifact@v4
-        with:
-          name: ai-test-results
-          path: tests/ai/results/
-          if-no-files-found: ignore
 
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm lint
+          cache: 'npm'
 
-  test:
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type Check
+        run: npm run type-check
+
+      - name: Unit Test
+        run: npm test -- --coverage
+
+      - name: Build
+        run: npm run build
+
+  codeql:
+    name: CodeQL Analysis
     runs-on: ubuntu-latest
+    permissions:
+      security-events: write
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: github/codeql-action/init@v3
         with:
-          version: 9
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm test
+          languages: javascript
+      - uses: github/codeql-action/analyze@v3
 
-  build:
-    runs-on: ubuntu-latest
-    needs: [lint, test]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-
-  pr-description:
-    runs-on: ubuntu-latest
+  deploy-preview:
+    name: Deploy Preview
+    needs: lint-test
     if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    environment:
+      name: preview
+      url: ${{ steps.deploy.outputs.url }}
     steps:
-      - uses: actions/github-script@v7
+      - uses: actions/checkout@v4
+      - id: deploy
+        uses: amondnet/vercel-action@v25
         with:
-          script: |
-            const pr = context.payload.pull_request;
-            if (!pr.body || pr.body.trim() === "") {
-              // ดึง commit ทั้งหมดใน PR
-              const commits = await github.rest.pulls.listCommits({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: pr.number
-              });
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          scope: ${{ secrets.VERCEL_ORG_ID }}
 
-              // สร้าง commit list
-              const commitList = commits.data
-                .map(c => `- ${c.commit.message.split("\n")[0]}`)
-                .join("\n");
+  deploy-staging:
+    name: Deploy Staging
+    needs: [lint-test, codeql]
+    if: github.ref == 'refs/heads/staging'
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: https://staging-crystalcastle.vercel.app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: '--env=staging'
+          alias-domains: staging-crystalcastle.vercel.app
 
-              // Template PR Description
-              const template = `
-## 🚀 Pull Request
+      - name: Update Audit Trail
+        run: |
+          echo "$(date -Iseconds) | STAGING | Deploy commit ${{ github.sha }} | EN: Staging deployment success | TH: ดีพลอย staging สำเร็จ" >> logs/audit.md
 
-### 📌 Summary / สรุป
-- EN: Auto-generated summary based on commit history
-- TH: สรุปอัตโนมัติจาก commit
+  deploy-production:
+    name: Deploy Production
+    needs: [lint-test, codeql]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://crystalcastle.vercel.app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: '--prod'
 
----
-
-### 🔄 Changes (Commits)
-${commitList}
-
----
-
-### ✅ Pre-Merge Checklist
-- [ ] Feature works as expected
-- [ ] Tests added/updated
-- [ ] Docs updated
-- [ ] AI cost validated
-
----
-
-### 🔎 Issue Reference
-- Related: #<issue-number>
-
----
-
-### 📝 Notes
-workflow already merged from crystalcastle/workflows to .github/workflows
-              `;
-
-              await github.rest.pulls.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: pr.number,
-                body: template
-              });
-            }
+      - name: Permissions Revert + Audit
+        run: |
+          echo "$(date -Iseconds) | PROD | Deploy commit ${{ github.sha }} | EN: Production release + permissions revert to read-all | TH: ขึ้นโปรดักชัน + คืนสิทธิ์เป็น read-all" >> logs/audit.md
+          # ใส่ script revert permission ของคุณตรงนี้
+          # node scripts/permissions-revert.js --mode=read-all
