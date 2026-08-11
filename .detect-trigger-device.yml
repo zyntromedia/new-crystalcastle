@@ -1,0 +1,24 @@
+      - name: Detect Trigger Device
+        id: device_check
+        run: |
+          # ดึง User-Agent หรือ Identifier ที่ต้องการตรวจสอบ
+          UA="${HTTP_USER_AGENT:-${{ github.event.head_commit.message }}}"
+
+          # ใช้ case statement แยกประเภทอุปกรณ์/สภาพแวดล้อม
+          case "$UA" in
+            *Android*|*iPhone*|*iPad*|*iPod*|*Mobile*)
+              echo "IS_MOBILE=true" >> $GITHUB_ENV
+              echo "DEVICE_TYPE=mobile" >> $GITHUB_OUTPUT
+              echo "📱 Triggered from a Mobile device"
+              ;;
+            *Chrome*|*Firefox*|*Safari*|*Edge*)
+              echo "IS_MOBILE=false" >> $GITHUB_ENV
+              echo "DEVICE_TYPE=desktop" >> $GITHUB_OUTPUT
+              echo "💻 Triggered from a Desktop / PC Browser"
+              ;;
+            *)
+              echo "IS_MOBILE=false" >> $GITHUB_ENV
+              echo "DEVICE_TYPE=unknown" >> $GITHUB_OUTPUT
+              echo "🤖 Triggered from Automated Git Event / CLI"
+              ;;
+          esac
