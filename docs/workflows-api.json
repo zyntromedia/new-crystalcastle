@@ -1,0 +1,12 @@
+Here are solid starting points for “Workflows API” docs, depending on which workflow system you mean:
+
+## Google Cloud Workflows (REST)
+- API reference (v1 / v1beta): https://docs.cloud.google.com/workflows/docs/reference/rest
+
+## Argo Workflows (Kubernetes workflow engine) REST API
+- REST API docs: https://argo-workflows.readthedocs.io/en/latest/rest-api/
+
+## WorkflowEngine (Workflow Server) “Workflow API”
+- Workflow API methods + request/test forms: https://workflowengine.io/documentation/workflow-server/workflow-api/
+
+If you tell me which platform you’re using (Google Cloud Workflows, Argo, WorkflowEngine/Workflow Server, Temporal, etc.) and whether you want REST or SDK examples (Node/Python/.NET), I’ll point you to the most relevant endpoints and an example “create/run/get status” sequence.
