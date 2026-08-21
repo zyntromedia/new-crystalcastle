@@ -1,0 +1,22 @@
+{
+  "autoFix": true,
+  "autoDoc": false,
+  "styleAndFormat": true,
+  "tabWidth": 2,
+  "style": {
+    "quotes": "single",
+    "methods": "dot",
+    "keywords": "lower",
+    "properties": "camel",
+    "control": "lower",
+    "numbers": "lower",
+    "hex": "lower",
+    "octal": "lower",
+    "binary": "lower",
+    "routines": "match",
+    "routineMethods": "camel",
+    "systemVariables": "lower",
+    "structureNames": "pascal",
+    "localVariables": "match"
+  }
+}
