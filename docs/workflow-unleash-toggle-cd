@@ -1,0 +1,88 @@
+โอเคครับ ทำ *docs* ให้ `new-crystalcastle` เลย 🔧
+
+ผมทำไฟล์ให้ครบ 3 ไฟล์สำคัญ เอาไปก๊อปวางได้เลย
+
+### *1. http://README.md - หน้าแรกของ repo*
+# new-crystalcastle
+
+ระบบบริการหลักของ Crystal Castle
+
+## Overview
+API สำหรับจัดการข้อมูลและฟีเจอร์ของแอป Crystal Castle
+
+## Health Check
+ตรวจสอบสถานะระบบ
+- `GET /health` - Liveness: แอปยังทำงานอยู่ไหม
+- `GET /ready` - Readiness: พร้อมรับ traffic ไหม เช็ค DB/Redis
+
+ตัวอย่าง response:
+```json
+{ "status": "ok", "version": "1.0.0", "uptime": "2h" }
+## Deploy
+ใช้ GitHub Actions deploy อัตโนมัติเมื่อ merge เข้า `main`
+
+ดูไฟล์: `.github/workflows/cd.yml`
+
+## Unleash
+Feature Flag ถูกควบคุมผ่าน Unleash
+- `dola.contrast_layers`: เปิด/ปิด เลเยอร์ใหม่
+
+หลัง deploy สำเร็จ workflow จะเปิด flag อัตโนมัติ
+
+### **2..github/workflows/ci.yml - Test ก่อน merge**
+```yaml
+name: CI
+on: [pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - run: npm test
+      - run: npm run lint
+### *3..github/workflows/cd.yml - Deploy + Health + Unleash*
+name: CD - Deploy to Production
+on:
+  push:
+    branches: [main]
+concurrency: { group: prod, cancel-in-progress: true }
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy
+        run: ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} 'bash -s' <./deploy.sh
+
+      - name: Health Check
+        run: |
+          for i in {1..6}; do
+            curl -f https://api.crystalcastle.com/health && exit 0
+            sleep 10
+          done
+          exit 1
+
+      - name: Enable Unleash Flag
+        if: success()
+        run: |
+          curl -X POST "${{ secrets.UNLEASH_URL }}/api/admin/features/dola.contrast_layers/on" \
+          -H "Authorization: ${{ secrets.UNLEASH_TOKEN }}"
+
+      - name: Rollback
+        if: failure()
+        run: ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} 'bash./rollback.sh'
+### *ขั้นตอนการเพิ่มเข้า GitHub*
+1. กด `Add file` > `Create new file`
+2. ตั้งชื่อ `README.md` แล้ววางอันแรก > Commit
+3. กด `Add file` > `Create new file` > ตั้งชื่อ `.github/workflows/ci.yml` > Commit
+4. ทำซ้ำกับ `cd.yml`
+
+อย่าลืมไปตั้ง `Settings > Secrets` เพิ่ม: `SERVER_IP`, `SERVER_USER`, `UNLEASH_URL`, `UNLEASH_TOKEN`
+
+ต้องการให้ผมปรับให้ตรงกับภาษาที่คุณใช้ไหมครับ? Node, Python, Go?
+แล้ว Health endpoint ของคุณชื่อ `/health` ตรงไหม
