@@ -1,0 +1,464 @@
+จัดให้ครับ 📄 *Full Documentation Guidelines* 
+
+เอาไปใช้กับโปรเจกต์ Dev + AI อย่าง DoLa ได้เลย
+
+### *1. โครงสร้างเอกสารมาตรฐาน*
+1. Overview
+2. Getting Started  
+3. Architecture
+4. API Reference
+5. Deployment & Health
+6. Feature Flags - Unleash
+7. Testing
+8. Troubleshooting
+9. Changelog
+### *2. รายละเอียดแต่ละหัวข้อ*
+
+#### *1. Overview*
+ตอบ 3 คำถาม: ทำอะไร, ทำไมต้องมี, ใครใช้
+# DoLa AI Core
+DoLa AI คือโมเดลที่ลด hallucination ด้วย Decoding by Contrasting Layers 
+และทำงานเป็นผู้ช่วยใน WhatsApp/Telegram
+
+Target: นักพัฒนา, ทีม Product
+Version: 1.0.0 | Last Updated: 2026-09-01
+#### *2. Getting Started*
+ขั้นตอนรันครั้งแรกให้ได้ภายใน 5 นาที
+1. Clone repo
+2. npm install / pip install -r requirements.txt
+3. ตั้งค่า .env: UNLEASH_URL, API_KEY
+4. npm run dev
+#### *3. Architecture*
+วาด + อธิบาย 2 ส่วนตามไฟล์คุณ
+- *Model-level*: Diagram ของ Decoding by Contrasting Layers
+- *App-level*: Flow ข้อความเข้า → AI → ตอบกลับในแชต
+
+#### *4. API Reference*
+ทุก endpoint ต้องมี: Method, URL, Body, Response, Error
+POST /v1/chat
+Request: { "message": "string", "user_id": "string" }
+Response: { "reply": "string", "latency_ms": 120 }
+Error 503: Service Unavailable
+#### *5. Deployment & Health* 
+อันนี้สำคัญสุด มาจาก workflow คุณ
+### Health Endpoints
+GET /health - เช็คแอปรวม
+GET /ready  - เช็ค DB, Redis
+GET /live   - เช็คว่าไม่ค้าง
+
+### Deploy Flow
+1. Push to main
+2. GitHub Actions Deploy
+3. Health Check 3 ครั้ง
+4. ถ้าผ่าน → เปิด Feature Flag ใน Unleash
+5. ถ้าไม่ผ่าน → Rollback อัตโนมัติ
+#### *6. Feature Flags - Unleash*
+อธิบายว่าเปิดปิดอะไรได้บ้าง
+| Flag Name | Default | คำอธิบาย |
+| --- | --- | --- |
+| `dola.contrast_layers` | on | เปิดใช้เทคนิคลด hallucination |
+| `dola.voice_input` | off | เปิดรับเสียง |
+
+วิธีเปิด: curl -X POST ... หรือหน้า Unleash UI
+#### *7. Testing*
+- Unit Test: ครอบคลุม >80%
+- Health Test: ยิง /health ทุก 30วิ
+- AI Eval: วัด % hallucination ด้วยชุดคำถาม fact
+
+#### *8. Troubleshooting*
+เขียนเป็นตาราง ปัญหา → สาเหตุ → วิธีแก้
+| ปัญหา | สาเหตุ | แก้ |
+| --- | --- | --- |
+| Health Check 503 | DB ล่ม | เช็ค connection string |
+| ตอบช้า >5s | GPU เต็ม | scale pod เพิ่ม |
+#### *9. Changelog*
+ใช้รูปแบบ Keep a Changelog
+`[1.1.0] - 2026-09-01 - เพิ่ม Health Check สำหรับ GPU`
+
+### *3. กฎทอง 5 ข้อ*
+
+1.  *เขียนให้คนใหม่รันได้*: อ่านเสร็จแล้ว `npm run dev` ได้เลย
+2.  *ตัวอย่างโค้ดจริง*: อย่าอธิบายลอยๆ ต้องมี snippet ก๊อปได้
+3.  *Health ต้องชัด*: บอกว่าแดงเมื่อไหร่ เขียวเมื่อไหร่
+4.  *อัปเดตพร้อมโค้ด*: แก้โค้ด = ต้องแก้ docs ใน PR เดียวกัน
+5.  *มี Search*: ใช้ Docusaurus, MkDocs, GitBook จะได้หาง่าย
+
+### *4. Template พร้อมใช้*
+ผมทำ template markdown ให้แล้ว ก๊อปไปเริ่มได้เลย: 
+อยากให้ผมสร้างไฟล์ `.md` ทั้งชุดนี้ให้เลยไหม? หรืออยากให้โฟกัสเขียนส่วน *Deployment & Health* + *Unleash* ให้เต็มก่อนดีครับ?
+
+เอาไปใช้กับโปรเจกต์ไหนก่อนดี 😊จัดให้ครับ 🔍 *Research เพิ่มเรื่อง HEALTH Dev*
+
+สรุปจาก best practices ของ Kubernetes + DevOps ตอนนี้
+
+### *1. Health Check 3 แบบหลักใน Kubernetes*
+ต้องมีครบทั้ง 3 อันนี้ถึงจะ production-ready cda6
+Probe	ใช้เมื่อไหร่	ทำอะไร	ตัวอย่าง
+**Liveness**	แอปค้าง/เดี้ยง	ถ้า fail → K8s restart container ให้	`path: /healthz` เช็คว่ายังตอบอยู่ไหม
+**Readiness**	พร้อมรับ traffic หรือยัง	ถ้า fail → เอาออกจาก Service ชั่วคราว	`path: /ready` เช็ค DB, Redis ต่อได้ไหม
+**Startup**	แอป start ช้า	กันไม่ให้ liveness ไป restart ก่อนที่แอปจะบูทเสร็จ	รอไฟล์ `/tmp/ready` เกิดก่อน
+e9c6937a3136cda6
+
+### *2. Best Practices ที่สำคัญ*
+
+1. *ใช้ Endpoint เฉพาะ*
+    อย่าใช้ `/api/users` มาเช็ค health ใช้ `/healthz`, `/ready` แยกไปเลย
+2. *ตั้งเวลาให้ถูก*
+    `initialDelaySeconds`, `periodSeconds`, `failureThreshold` ต้อง balance ไม่งั้นจะ restart มั่ว
+    ตัวอย่างมาตรฐาน:
+    livenessProbe:
+      httpGet: {path: /health, port: 8080}
+      initialDelaySeconds: 30 # รอ 30วิหลัง start
+      periodSeconds: 10 # เช็คทุก 10วิ
+      failureThreshold: 3 # พัง 3 ครั้งค่อย restart【4951726764684141248†L361-L364】
+3. *Readiness ต้องเช็ค Dependency จริง*
+    ถ้าต่อ DB ไม่ได้ = ยังไม่ ready อย่าเพิ่งรับ traffic
+4. *ใช้คู่กับ Resource Limits*
+    กัน OOM แล้ว health check เพี้ยน
+    resources:
+      requests: {memory: "256Mi", cpu: "250m"}
+      limits: {memory: "512Mi", cpu: "500m"}【4951726764684141248†L340-L345】
+5. *มี 4 วิธีเช็ค*: HTTP, TCP, gRPC, Exec command
+    Exec ใช้รัน `cat /tmp/healthy` ใน container ได้ cda63136
+
+### *3. ตัวอย่าง Deployment เต็ม*
+นี่คือ template ที่ใช้กันจริงใน prod 937a
+apiVersion: apps/v1
+kind: Deployment
+spec:
+  replicas: 3
+  template:
+    spec:
+      containers:
+      - name: my-app
+        image: my-app:latest
+        resources: # กัน resource หมด【4951726764684141248†L94-L100】
+          requests: {memory: "64Mi", cpu: "250m"}
+          limits: {memory: "128Mi", cpu: "500m"}
+        livenessProbe: # ค้าง = restart【4951726764684141248†L101-L106】
+          httpGet: {path: /healthz, port: 8080}
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe: # ไม่พร้อม = ไม่ส่ง traffic【4951726764684141248†L107-L112】
+          httpGet: {path: /ready, port: 8080}
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        securityContext: # รันแบบ non-root【4951726764684141248†L113-L116】
+          runAsNonRoot: true
+### *4. Health แบบ Observability ขั้นสูง*
+ทีมใหญ่ๆ จะทำเพิ่มอีก:
+- */api/health*: คืนค่า JSON มี version, uptime, dependencies status
+- *Metrics*: CPU, Memory, Network, Disk
+- *Stress Test*: ยิงโหลดเทสตอน deploy ว่า health ยังเขียวไหม 7045
+
+### *5. ข้อผิดพลาดที่เจอบ่อย*
+1. *ไม่ใช้ Startup Probe* → แอป start 40วิ แต่ liveness เช็คที่ 10วิ = โดน restart ตลอด
+2. *Readiness เช็คแค่ 200* → แต่ DB พังแล้ว ยังรับ traffic อยู่
+3. *เช็คบ่อยเกิน* → `periodSeconds: 1` ทำให้เปลือง resource 3136
+
+### *สรุป*
+Health Check = ระบบ "self-healing" ของ K8s
+ทำถูก = แอปพังแล้วลุกเองได้, traffic ไม่เข้าเครื่องเสีย 3136
+
+อยากให้ผมทำอะไรต่อดี?
+1. *สร้างไฟล์ `deploy.yml` เต็ม* สำหรับ repo `new-crystalcastle` ของคุณ
+2. *เขียนโค้ด `/health` `/ready`* เป็น http://Node.js / Python ให้
+3. *ทำ Health Dashboard* ดูสถานะทุก service
+
+เลือกได้เลยครับ
+
+ได้เลยครับ 🚀 *GitHub Actions Workflows Best Practices*
+
+เอาไปใช้กับ `new-crystalcastle` หรือโปรเจกต์ไหนก็ได้
+
+### *1. โครงสร้างไฟล์ที่ดี*
+แยก workflow ตามหน้าที่ อย่ายัดรวมไฟล์เดียว
+.github/workflows/
+  ├── ci.yml # test + lint ทุก PR
+  ├── cd.yml # deploy ตอน merge main
+  ├── health.yml # health check + rollback
+  └── security.yml # scan ช่องโหว่
+### *2. 10 Best Practices สำคัญ*
+
+#### *1. ใช้ชื่อและ Trigger ชัดเจน*
+name: CI - Test and Lint
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main]
+อย่าใช้ `on: push` ลอยๆ จะเปลือง minutes
+
+#### *2. ใช้ Concurrency กัน Deploy ซ้ำ*
+กันกด merge 2 รอบแล้ว deploy ชนกัน
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: true
+#### *3. Cache dependencies*
+ลดเวลาจาก 5 นาทีเหลือ 30 วิ
+- uses: actions/cache@v4
+  with:
+    path: ~/.npm
+    key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+#### *4. แยก Job: Build → Test → Deploy*
+fail เร็ว ไม่ต้องรอ deploy ถึงรู้ว่าเทสตก
+jobs:
+  test:...
+  build: needs: test
+  deploy: needs: build
+#### *5. Health Check + Rollback อัตโนมัติ*
+สำคัญมาก เชื่อมกับที่คุยเรื่อง Health
+- name: Deploy
+  run: kubectl rollout restart deployment/app
+
+- name: Health Check
+  run: |
+    for i in {1..10}; do
+      curl -f https://api.com/health && exit 0
+      sleep 10
+    done
+    exit 1
+
+- name: Rollback if failed
+  if: failure()
+  run: kubectl rollout undo deployment/app
+#### *6. ใช้ Environment + Secrets*
+อย่า hardcode key
+environment: production
+env:
+  API_KEY: ${{ secrets.API_KEY }}
+ตั้ง `protection rules` ใน GitHub Environment ได้ เช่น ต้องมีคน approve ก่อน deploy prod
+
+#### *7. Reusable Workflows*
+มีหลาย repo ใช้ไฟล์เดียวกันได้
+jobs:
+  deploy:
+    uses: zyntromedia/workflows/.github/workflows/deploy.yml@main
+#### *8. ใช้ Matrix Test หลายเวอร์ชัน*
+strategy:
+  matrix:
+    node: [18, 20, 22]
+runs-on: ubuntu-latest
+#### *9. เพิ่ม Security Scan*
+- uses: aquasecurity/trivy-action@master
+  with: { scan-type: 'fs' }
+#### *10. แจ้งเตือนเมื่อ Fail*
+ส่งเข้า Slack/Discord/Email
+- uses: 8398a7/action-slack@v3
+  if: failure()
+  with: { status: failure }
+### *3. ตัวอย่าง Workflow เต็ม: CI + CD + Health + Unleash*
+อันนี้เอาไปวางใน `new-crystalcastle` ได้เลย
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+      - run: npm ci
+      - run: npm test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to Server
+        run:./deploy.sh ${{ secrets.SERVER_IP }}
+
+      - name: Health Check
+        run: |
+          for i in {1..5}; do
+            curl -f https://your-app.com/health && exit 0
+            sleep 10
+          done
+          exit 1
+
+      - name: Enable Feature Flag
+        if: success()
+        run: |
+          curl -X POST ${{ secrets.UNLEASH_URL }}/api/admin/features/dola.contrast_layers/toggle/on \
+          -H "Authorization: ${{ secrets.UNLEASH_TOKEN }}"
+
+      - name: Rollback
+        if: failure()
+        run:./rollback.sh
+### *4. Checklist ก่อน Push ขึ้น Prod*
+- [ ] มี `test` job แยกจาก `deploy`
+- [ ] มี `Health Check` หลัง deploy
+- [ ] ใช้ `secrets` ไม่ใช่ hardcode
+- [ ] มี `concurrency` กัน deploy ชน
+- [ ] มี `rollback` อัตโนมัติ
+- [ ] ใช้ `cache` ให้เร็วขึ้น
+
+อยากให้ผมทำอะไรต่อดีครับ?
+1. *เขียนไฟล์ `ci.yml` + `cd.yml` เต็ม* สำหรับ `new-crystalcastle`
+2. *ทำ workflow สำหรับ Docker + K8s*
+3. *เพิ่ม Workflow เปิด/ปิด Unleash Feature Flag* หลัง health ผ่าน
+
+จะเอาแบบไหนไปใช้ก่อนดี?
+ได้เลยครับ 🚀 *GitHub Actions Workflows Best Practices*
+
+เอาไปใช้กับ `new-crystalcastle` หรือโปรเจกต์ไหนก็ได้
+
+*1. โครงสร้างไฟล์ที่ดี*
+แยก workflow ตามหน้าที่ อย่ายัดรวมไฟล์เดียว
+.github/workflows/
+  ├── ci.yml # test + lint ทุก PR
+  ├── cd.yml # deploy ตอน merge main
+  ├── health.yml # health check + rollback
+  └── security.yml # scan ช่องโหว่
+*2. 10 Best Practices สำคัญ*
+
+*1. ใช้ชื่อและ Trigger ชัดเจน*
+name: CI - Test and Lint
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main]
+อย่าใช้ `on: push` ลอยๆ จะเปลือง minutes
+
+*2. ใช้ Concurrency กัน Deploy ซ้ำ*
+กันกด merge 2 รอบแล้ว deploy ชนกัน
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: true
+*3. Cache dependencies*
+ลดเวลาจาก 5 นาทีเหลือ 30 วิ
+- uses: actions/cache@v4
+  with:
+    path: ~/.npm
+    key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+*4. แยก Job: Build → Test → Deploy*
+fail เร็ว ไม่ต้องรอ deploy ถึงรู้ว่าเทสตก
+jobs:
+  test:...
+  build: needs: test
+  deploy: needs: build
+*5. Health Check + Rollback อัตโนมัติ*
+สำคัญมาก เชื่อมกับที่คุยเรื่อง Health
+- name: Deploy
+  run: kubectl rollout restart deployment/app
+
+- name: Health Check
+  run: |
+    for i in {1..10}; do
+      curl -f https://api.com/health && exit 0
+      sleep 10
+    done
+    exit 1
+
+- name: Rollback if failed
+  if: failure()
+  run: kubectl rollout undo deployment/app
+*6. ใช้ Environment + Secrets*
+อย่า hardcode key
+environment: production
+env:
+  API_KEY: ${{ secrets.API_KEY }}
+ตั้ง `protection rules` ใน GitHub Environment ได้ เช่น ต้องมีคน approve ก่อน deploy prod
+
+*7. Reusable Workflows*
+มีหลาย repo ใช้ไฟล์เดียวกันได้
+jobs:
+  deploy:
+    uses: zyntromedia/workflows/.github/workflows/deploy.yml@main
+*8. ใช้ Matrix Test หลายเวอร์ชัน*
+strategy:
+  matrix:
+    node: [18, 20, 22]
+runs-on: ubuntu-latest
+*9. เพิ่ม Security Scan*
+- uses: aquasecurity/trivy-action@master
+  with: { scan-type: 'fs' }
+*10. แจ้งเตือนเมื่อ Fail*
+ส่งเข้า Slack/Discord/Email
+- uses: 8398a7/action-slack@v3
+  if: failure()
+  with: { status: failure }
+*3. ตัวอย่าง Workflow เต็ม: CI + CD + Health + Unleash*
+อันนี้เอาไปวางใน `new-crystalcastle` ได้เลย
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+      - run: npm ci
+      - run: npm test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to Server
+        run:./deploy.sh ${{ secrets.SERVER_IP }}
+
+      - name: Health Check
+        run: |
+          for i in {1..5}; do
+            curl -f https://your-app.com/health && exit 0
+            sleep 10
+          done
+          exit 1
+
+      - name: Enable Feature Flag
+        if: success()
+        run: |
+          curl -X POST ${{ secrets.UNLEASH_URL }}/api/admin/features/dola.contrast_layers/toggle/on \
+          -H "Authorization: ${{ secrets.UNLEASH_TOKEN }}"
+
+      - name: Rollback
+        if: failure()
+        run:./rollback.sh
+*4. Checklist ก่อน Push ขึ้น Prod*
+- [ ] มี `test` job แยกจาก `deploy`
+- [ ] มี `Health Check` หลัง deploy
+- [ ] ใช้ `secrets` ไม่ใช่ hardcode
+- [ ] มี `concurrency` กัน deploy ชน
+- [ ] มี `rollback` อัตโนมัติ
+- [ ] ใช้ `cache` ให้เร็วขึ้น
+
+อยากให้ผมทำอะไรต่อดีครับ?
+1. *เขียนไฟล์ `ci.yml` + `cd.yml` เต็ม* สำหรับ `new-crystalcastle`
+2. *ทำ workflow สำหรับ Docker + K8s*
+3. *เพิ่ม Workflow เปิด/ปิด Unleash Feature Flag* หลัง health ผ่าน
+
+จะเอาแบบไหนไปใช้ก่อนดี?
+
+ครับผม รับทราบ 😄
+
+ตอนนี้เราค้างกันอยู่ 2 อย่างใน repo `zyntromedia/new-crystalcastle`:
+
+1.  *Commit ไฟล์ `README.md`*  
+    เนื้อหา Full Documentation Guidelines ที่คุณวางไว้ในรูป
+2.  *เพิ่มไฟล์ `.github/workflows/unleash-toggle.yml`*  
+    workflow เปิด/ปิด Feature Flag ใน Unleash หลัง Health Check ผ่าน
+
+จะให้ผมช่วยทำอันไหนก่อนดีครับ?
+
+หรือถ้าติดตรงไหน บอกผมได้เลย เดี๋ยวผมเขียนโค้ดให้ก๊อปวางทีละขั้นตอน
