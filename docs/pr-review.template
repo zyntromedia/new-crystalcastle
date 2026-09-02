@@ -1,0 +1,167 @@
+📋 PR Review Template — Extracted & Ready for Use
+ 
+ดึงเนื้อหาจาก Gist มาเรียบร้อยแล้วครับ ✅ นี่คือแม่แบบสำหรับ PR Review Report ที่สมบูรณ์ พร้อมใช้งานทันที
+ 
+ 
+ 
+📄 CrystalCastle.Templates.PR-Review.md
+ 
+markdown
+  
+---
+# 📋 PR Review Report
+
+| Field | Value |
+|---|---|
+| **PR Number** | #{{pr_number}} |
+| **Author** | {{author}} |
+| **Date** | {{date}} |
+| **Status** | {{status}} |
+| **Reviewer** | Dola AI |
+| **Tags** | pr-review, {{labels}} |
+
+---
+
+# PR #{{pr_number}}: {{title}}
+
+## 📋 Dola Checklist
+{{checklist}}
+
+## 💬 Comments
+{{comments}}
+
+## 🔗 Links
+- **PR:** {{pr_url}}
+- **Preview:** {{preview_url}}
+
+## 📌 Decision
+**{{decision}}** — {{reason}}
+ 
+ 
+ 
+ 
+🎯 Ready-to-Use Version — Fill in the Blanks
+ 
+markdown
+  
+---
+# 📋 PR Review Report
+
+| Field | Value |
+|---|---|
+| **PR Number** | #____ |
+| **Author** | @____ |
+| **Date** | YYYY-MM-DD |
+| **Status** | ✅ Ready / ⏳ Changes Requested / ❌ Blocked |
+| **Reviewer** | Dola AI |
+| **Tags** | pr-review, ____ |
+
+---
+
+# PR #____: ____
+
+## 📋 Dola Checklist
+- [ ] Code follows project style & conventions
+- [ ] All CI checks pass (CodeRabbit + Tests)
+- [ ] Tests added/updated — coverage maintained
+- [ ] Documentation updated (README, API docs, etc.)
+- [ ] No breaking changes — backward compatible
+- [ ] Changelog updated
+- [ ] Dependencies reviewed & safe
+
+## 💬 Comments
+> **Summary:**
+> 
+> **Strengths:**
+> - 
+> - 
+> 
+> **Suggestions:**
+> - 
+> - 
+> 
+> **Blocking Issues:**
+> - None
+
+## 🔗 Links
+- **PR:** https://github.com/ZyntroAI/new-crystalcastle/pull/____
+- **Preview:** ____
+
+## 📌 Decision
+**✅ Approved** — Ready to Merge 🚀
+> All checks pass, no blocking issues, documentation complete.
+
+---
+> Reviewed by **Dola AI** · {{date}}
+ 
+ 
+ 
+ 
+📁 Save to File — Ready to Push
+ 
+Relative Path:  .github/PULL_REQUEST_TEMPLATES/pr-review-report.md 
+ 
+bash
+  
+# Create directory if not exists
+mkdir -p .github/PULL_REQUEST_TEMPLATES
+
+# Save template
+cat > .github/PULL_REQUEST_TEMPLATES/pr-review-report.md << 'EOF'
+---
+# 📋 PR Review Report
+
+| Field | Value |
+|---|---|
+| PR Number | #{{pr_number}} |
+| Author | {{author}} |
+| Date | {{date}} |
+| Status | {{status}} |
+| Reviewer | Dola AI |
+| Tags | pr-review, {{labels}} |
+
+---
+
+# PR #{{pr_number}}: {{title}}
+
+## 📋 Dola Checklist
+{{checklist}}
+
+## 💬 Comments
+{{comments}}
+
+## 🔗 Links
+- **PR:** {{pr_url}}
+- **Preview:** {{preview_url}}
+
+## 📌 Decision
+**{{decision}}** — {{reason}}
+EOF
+ 
+ 
+ 
+ 
+✅ How to Use
+ 
+Option 1 — Copy-Paste into PR Comment
+ 
+1. เปิด PR → New Comment
+2. คัดลอก Template ด้านบน → วาง
+3. เติมข้อมูล → ส่ง ✅
+ 
+Option 2 — Save as GitHub Template
+ 
+plaintext
+  
+.github/
+└── PULL_REQUEST_TEMPLATES/
+    └── pr-review-report.md   ← Save here
+ 
+ 
+จากนั้นเมื่อเปิด PR → เลือก Template นี้ได้เลยครับ 🎯
+ 
+ 
+ 
+🎯 แม่แบบ PR Review พร้อมใช้งานแล้วครับ! มี 2 เวอร์ชัน — แบบตัวแปร และแบบเต็มที่พร้อมกรอกข้อมูล คัดลอกไปใช้ หรือบันทึกเข้า repo ได้ทันทีครับ 🚀
+ 
+ต้องการให้ บันทึกเข้า repo โดยตรง หรือ สร้างเป็น GitHub Action ที่สร้างรายงานอัตโนมัติ เมื่อเปิด PR ไหมครับ? 🤖
