@@ -1,22 +1,32 @@
-from agents.writer_agent import WriterAgent
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from background_worker import router as worker_router
+import uvicorn
 
-# นี่คือ LLM Wrapper จริงที่คุณต้องเชื่อมกับ Provider ของ ZyntroAI
-def real_llm_func(prompt: str) -> str:
-    # return provider.generate(prompt)
-    raise NotImplementedError("ต้องเชื่อมกับ LLM Provider จริง")
-
-
-agent = WriterAgent(
-    llm_func=real_llm_func,
-    max_iterations=3
+app = FastAPI(
+    title="ZyntroAI Background Worker API",
+    version="1.0.0",
+    docs_url="/",
+    redoc_url="/redoc"
 )
 
-result = agent.run(
-    prompt="เขียน Evergreen Note เกี่ยวกับ Observability for DevOps",
-    context_notes=[
-        "Observability = Metrics + Logs + Traces",
-        "Repair Loop ต้องอาศัย Observability"
-    ]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # restrict in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-print(result.final_output)
+app.include_router(worker_router)
+
+@app.get("/v1/status")
+async def health():
+    return {
+        "ok": True,
+        "timestamp": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+        "version": "1.0.0"
+    }
+
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", port=8787, reload=True)
