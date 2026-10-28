@@ -1,0 +1,371 @@
+✅ Obsidian Plugin for ZyntroAI Vault (Integrated with FastAPI / Google Cloud Worker)
+ 
+ชื่อเต็ม: ZyntroAI Vault Connector Plugin
+จุดประสงค์: ภายใน Obsidian สามารถสั่ง AutoGenerateKnowledge / Refresh Skills / ดู Job Status / ตรวจ Protected Paths ได้ โดยเชื่อมไปยัง FastAPI + Cloud Run backend
+ 
+🧠 Architecture
+ 
+- Obsidian Plugin (TypeScript) → Command Palette + Settings + Status Bar
+- FastAPI / Cloud Run →  /v1/jobs ,  /v1/knowledge/regenerate ,  /v1/skills/refresh 
+- Vault → อ่านไฟล์ .md / ตรวจ Skills/ .agents/ (Plugin ไม่แก้โดยตรง — ส่งไป Worker แทน)
+- Cloud Tasks / Firestore → ติดตามงาน
+- Security: ไม่เก็บ Bearer Token ใน Vault; ใช้ Cloud IAM / Local API token
+ 
+📁 Plugin Folder Structure
+ 
+plaintext  
+obsidian-zyntroai-connector/
+├── src/
+│   ├── main.ts
+│   ├── settings.ts
+│   ├── api.ts
+│   └── types.ts
+├── manifest.json
+├── package.json
+├── esbuild.config.mjs
+└── README.md
+ 
+ 
+📌 Step 1: Initialize Plugin Scaffold
+ 
+bash  
+git clone https://github.com/obsidianmd/obsidian-sample-plugin.git obsidian-zyntroai-connector
+cd obsidian-zyntroai-connector
+npm install
+npm run dev
+ 
+ 
+สร้าง Symlink ไป Vault
+ 
+bash  
+# macOS / Linux
+ln -s $(pwd) /path/to/your-vault/.obsidian/plugins/obsidian-zyntroai-connector
+ 
+ 
+เปิด Obsidian → ปิด Restricted Mode → Reload (Ctrl+R) → Enable Plugin
+ 
+📄 File 1:  manifest.json 
+ 
+json  
+{
+  "id": "obsidian-zyntroai-connector",
+  "name": "ZyntroAI Vault Connector",
+  "version": "1.0.0",
+  "minAppVersion": "1.4.0",
+  "description": "Trigger AutoGenerateKnowledge, Skills Refresh & monitor ZyntroAI jobs",
+  "author": "ZyntroAI Engineering",
+  "authorUrl": "",
+  "isDesktopOnly": true
+}
+ 
+ 
+📄 File 2:  src/types.ts 
+ 
+ts  
+export interface ZyntroSettings {
+  apiBaseUrl: string;
+  authToken: string;
+  pollIntervalMs: number;
+}
+
+export interface JobInfo {
+  job_id: string;
+  job_type: string;
+  status: "pending" | "running" | "completed" | "failed";
+  progress: number;
+  message: string;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+  result?: Record<string, unknown>;
+  error?: string;
+}
+
+export interface SubmitJobRequest {
+  job_type: "knowledge_regen" | "skills_refresh" | "token_rotate";
+  payload?: Record<string, unknown>;
+  schedule_seconds?: number;
+}
+ 
+ 
+📄 File 3:  src/api.ts 
+ 
+ts  
+import { JobInfo, SubmitJobRequest } from "./types";
+
+export class ZyntroApiClient {
+  constructor(private baseUrl: string, private token: string) {}
+
+  private async fetchJson<T>(path: string, options: RequestInit = {}): Promise<T> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.token}`,
+        ...options.headers,
+      },
+    });
+    if (!res.ok) throw new Error(`API Error ${res.status}: ${await res.text()}`);
+    return res.json();
+  }
+
+  async submitJob(req: SubmitJobRequest): Promise<{ job_id: string; status: string }> {
+    return this.fetchJson("/v1/jobs", {
+      method: "POST",
+      body: JSON.stringify(req),
+    });
+  }
+
+  async getJob(jobId: string): Promise<JobInfo> {
+    return this.fetchJson(`/v1/jobs/${jobId}`);
+  }
+
+  async listJobs(): Promise<JobInfo[]> {
+    return this.fetchJson("/v1/jobs");
+  }
+
+  async healthCheck(): Promise<{ ok: boolean }> {
+    return this.fetchJson("/v1/status");
+  }
+}
+ 
+ 
+📄 File 4:  src/settings.ts 
+ 
+ts  
+import { App, PluginSettingTab, Setting } from "obsidian";
+import type ZyntroConnector from "./main";
+import { ZyntroSettings } from "./types";
+
+export const DEFAULT_SETTINGS: ZyntroSettings = {
+  apiBaseUrl: "http://localhost:8787/v1",
+  authToken: "",
+  pollIntervalMs: 3000,
+};
+
+export class ZyntroSettingTab extends PluginSettingTab {
+  constructor(app: App, private plugin: ZyntroConnector) {
+    super(app, plugin);
+  }
+
+  display(): void {
+    const { containerEl } = this;
+    containerEl.empty();
+    containerEl.createEl("h2", { text: "ZyntroAI Vault Connector Settings" });
+
+    new Setting(containerEl)
+      .setName("API Base URL")
+      .setDesc("e.g. https://your-cloud-run-url.run.app/v1")
+      .addText((text) =>
+        text
+          .setPlaceholder("http://localhost:8787/v1")
+          .setValue(this.plugin.settings.apiBaseUrl)
+          .onChange(async (value) => {
+            this.plugin.settings.apiBaseUrl = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Bearer Token")
+      .setDesc("⚠️ Local only / short‑lived token — do NOT commit")
+      .addText((text) =>
+        text
+          .setPlaceholder("Bearer token")
+          .setValue(this.plugin.settings.authToken)
+          .onChange(async (value) => {
+            this.plugin.settings.authToken = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Poll Interval (ms)")
+      .setDesc("How often refresh job status")
+      .addNumber((num) =>
+        num
+          .setValue(this.plugin.settings.pollIntervalMs)
+          .onChange(async (value) => {
+            this.plugin.settings.pollIntervalMs = value;
+            await this.plugin.saveSettings();
+          })
+      );
+  }
+}
+ 
+ 
+ 
+ 
+📄 File 5:  src/main.ts 
+ 
+ts  
+import { App, Notice, Plugin, StatusBarItem } from "obsidian";
+import { ZyntroApiClient } from "./api";
+import { DEFAULT_SETTINGS, ZyntroSettingTab } from "./settings";
+import { ZyntroSettings } from "./types";
+
+export default class ZyntroConnector extends Plugin {
+  settings: ZyntroSettings = DEFAULT_SETTINGS;
+  statusBar?: StatusBarItem;
+  pollTimer?: number;
+
+  get client(): ZyntroApiClient {
+    return new ZyntroApiClient(this.settings.apiBaseUrl, this.settings.authToken);
+  }
+
+  async onload(): Promise<void> {
+    await this.loadSettings();
+    this.addSettingTab(new ZyntroSettingTab(this.app, this));
+    this.statusBar = this.addStatusBarItem();
+    this.statusBar.setText("🔄 ZyntroAI: Idle");
+
+    // Command 1: Trigger AutoGenerateKnowledge
+    this.addCommand({
+      id: "zyntro-regenerate-knowledge",
+      name: "ZyntroAI: Regenerate Knowledge Base",
+      callback: async () => {
+        try {
+          const result = await this.client.submitJob({
+            job_type: "knowledge_regen",
+            payload: { vaultPath: this.app.vault.getRoot().path },
+          });
+          new Notice(`✅ Knowledge Regen Queued JobID: ${result.job_id}`);
+          this.startPolling(result.job_id);
+        } catch (err) {
+          new Notice(`❌ Failed: ${(err as Error).message}`);
+        }
+      },
+    });
+
+    // Command 2: Refresh Skills & Protected Path Scan
+    this.addCommand({
+      id: "zyntro-refresh-skills",
+      name: "ZyntroAI: Refresh Skills / Scan .agents & Skills",
+      callback: async () => {
+        try {
+          const result = await this.client.submitJob({
+            job_type: "skills_refresh",
+            payload: {},
+          });
+          new Notice(`✅ Skills Refresh Queued JobID: ${result.job_id}`);
+          this.startPolling(result.job_id);
+        } catch (err) {
+          new Notice(`❌ Failed: ${(err as Error).message}`);
+        }
+      },
+    });
+
+    // Command 3: View Latest Jobs
+    this.addCommand({
+      id: "zyntro-list-jobs",
+      name: "ZyntroAI: List Recent Jobs",
+      callback: async () => {
+        try {
+          const jobs = await this.client.listJobs();
+          const message = jobs.slice(0,5).map(j => `${j.job_id} | ${j.job_type} | ${j.status}`).join("\n");
+          new Notice(`📋 Recent Jobs:\n${message}`);
+        } catch (err) {
+          new Notice(`❌ Failed: ${(err as Error).message}`);
+        }
+      },
+    });
+  }
+
+  startPolling(jobId: string): void {
+    clearInterval(this.pollTimer);
+    this.pollTimer = window.setInterval(async () => {
+      try {
+        const job = await this.client.getJob(jobId);
+        this.statusBar?.setText(`🔄 ${job.job_type}: ${job.status} ${job.progress}%`);
+        if (job.status === "completed") {
+          new Notice(`✅ Job ${jobId} Completed`);
+          clearInterval(this.pollTimer);
+          this.statusBar?.setText("✅ ZyntroAI: Completed");
+        } else if (job.status === "failed") {
+          new Notice(`❌ Job ${jobId} Failed: ${job.error}`);
+          clearInterval(this.pollTimer);
+          this.statusBar?.setText("❌ ZyntroAI: Failed");
+        }
+      } catch (err) {
+        this.statusBar?.setText("⚠️ ZyntroAI: Poll Error");
+      }
+    }, this.settings.pollIntervalMs);
+  }
+
+  onunload(): void {
+    clearInterval(this.pollTimer);
+    this.statusBar?.remove();
+  }
+
+  async loadSettings(): Promise<void> {
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+  }
+
+  async saveSettings(): Promise<void> {
+    await this.saveData(this.settings);
+  }
+}
+ 
+ 
+📄 File 6:  package.json  (snippet)
+ 
+json  
+{
+  "scripts": {
+    "dev": "esbuild main.ts --bundle --sourcemap --outfile=main.js --watch",
+    "build": "esbuild main.ts --bundle --sourcemap --outfile=main.js --minify"
+  },
+  "devDependencies": {
+    "esbuild": "^0.19.0",
+    "obsidian": "^1.4.0",
+    "typescript": "^5.0.0"
+  }
+}
+ 
+ 
+🚀 How to Run
+ 
+1.  npm run dev  → watch build
+2. Reload Obsidian (Ctrl+R)
+3. Settings → ZyntroAI Vault Connector → กรอก API URL + Token
+4. Open Command Palette (Ctrl+P) → ค้นหา:
+-  ZyntroAI: Regenerate Knowledge Base 
+-  ZyntroAI: Refresh Skills / Scan .agents & Skills 
+-  ZyntroAI: List Recent Jobs 
+5. Status Bar ที่ล่างจะแสดง Progress ของ Job
+6. Backend ต้องทำงาน (FastAPI / Cloud Run) + CORS ตั้งค่าให้อนุญาต Origin ของ Obsidian (localhost สำหรับ dev)
+ 
+🛡️ Vault Protection Logic (สำคัญมาก)
+ 
+❗ Plugin ไม่แก้ไฟล์ใน Skills/ .agents/ โดยตรง
+ 
+- Plugin อ่าน Vault Metadata → ส่งคำสั่งไป Worker
+- Worker ตรวจ Protected Paths → AutoGenerateKnowledge สร้างผลลัพธ์
+- Plugin แจ้งเตือนถ้าเป็น protected zone (สามารถสร้าง Warning Modal เพิ่มได้)
+- Production: Bearer Token ควรเป็น Short‑Lived JWT / Cloud Identity ไม่เก็บถาวรใน Obsidian Settings
+- CORS: FastAPI ต้อง allow origin ของเครื่องที่ใช้ Obsidian
+- Cloud Run: ใช้ IAM auth ไม่เปิด allow‑unauthenticated จริงจัง
+ 
+🔗 เชื่อมต่อกับ Workflow เต็ม
+ 
+✅ ตอนนี้ Stack กลายเป็น:
+ 
+- Obsidian Plugin → ส่ง Job → Cloud Tasks → FastAPI Worker → Firestore Job → Cloud Storage Artifacts → Work Console index.html ดู Status
+- สามารถเพิ่ม:
+- Modal แสดงรายละเอียด Job เต็มๆ
+- Scan Vault เพื่อค้นหา SKILL.md / MOC อัตโนมัติ
+- Warning Dialog เมื่อพยายามแก้ Protected Path
+- Trigger cherry‑pick / patch workflow จาก Command Palette
+- อ่าน Excalidraw Diagram เพื่อสร้าง Knowledge
+- Update OpenAPI YAML เพิ่ม Endpoint สำหรับ Vault Scan
+ 
+📌 ต่อไปที่คุณสามารถเลือกได้
+ 
+A) เพิ่ม Obsidian Modal / View (Custom View) เพื่อแสดง Dashboard เต็มๆ ภายใน Obsidian
+B) เขียน Vault Scanner Code (Plugin Side) เพื่อส่งรายชื่อ Skills/ .agents/ ไป Worker
+C) เพิ่ม Warning Popup เมื่อเปิดไฟล์ใน Protected Path
+D) อัปเดต OpenAPI YAML ให้ครอบคลุม Vault Scan Endpoint
+E) สร้าง Terraform สำหรับทั้ง Stack รวมถึง Auth สำหรับ Obsidian ↔ Cloud Run
+F) เพิ่ม MCP Server สำหรับ Obsidian แทน Plugin (สำหรับ Agent)
+ 
+💬 ต้องการให้ผมสร้าง Custom Obsidian View (Tab ภายใน Obsidian สำหรับดู Jobs + Protected Path Status) ต่อเลยหรือไม่? 🚀
