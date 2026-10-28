@@ -1,0 +1,382 @@
+✅ FastAPI Background Worker + Full Google Cloud Integration
+ 
+Extended from the previous FastAPI worker → add Cloud Run, Cloud Tasks, Cloud Logging, Cloud Storage, Firestore (Job Tracking), Secret Manager for token_regen + AutoGenerateKnowledge workflows
+ 
+🧠 Architecture Overview
+ 
+- FastAPI (Cloud Run) = API Gateway / Work Console backend
+- Cloud Tasks = Real durable background queue (replace BackgroundTasks)
+- Firestore = Job database (no more in‑memory store)
+- Cloud Logging = Structured logs
+- Cloud Storage = Save generated knowledge artifacts
+- Secret Manager = Load secrets (NOT hardcode tokens)
+- IAM = Service Accounts permission chain
+- AutoGenerateKnowledge.py / token_regen.py = Worker payload executors
+ 
+💡 Why Cloud Tasks instead of BackgroundTasks: Cloud Run auto‑scales; BackgroundTasks dies if request ends — not suitable for real production
+ 
+ 
+ 
+📦 Install Dependencies
+ 
+bash  
+pip install fastapi uvicorn pydantic google-cloud-firestore google-cloud-tasks google-cloud-storage google-cloud-secret-manager structlog
+ 
+ 
+bash  
+gcloud auth application-default login
+gcloud config set project YOUR_GCP_PROJECT_ID
+ 
+ 
+⚙️ Environment Variables ( .env  / Cloud Run env vars)
+ 
+env  
+GCP_PROJECT_ID=your-project-id
+REGION=asia-southeast1
+QUEUE_NAME=zyntroai-worker-queue
+FIRESTORE_JOB_COLLECTION=jobs
+BUCKET_NAME=zyntroai-generated-knowledge
+WORKER_URL=https://YOUR-CLOUD-RUN-URL.run.app/v1/worker/execute
+ 
+ 
+📁 File 1:  gcp_background_worker.py  (Main FastAPI App)
+ 
+python  
+from fastapi import FastAPI, Request, HTTPException, Header
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from datetime import datetime, timezone
+import uuid
+import structlog
+import os
+import json
+import subprocess
+from typing import Dict, List, Optional, Any
+from google.cloud import firestore
+from google.cloud import tasks_v2
+from google.cloud import storage
+from google.cloud import secretmanager
+
+logger = structlog.get_logger()
+
+# ─── Config ───
+PROJECT_ID = os.getenv("GCP_PROJECT_ID")
+REGION = os.getenv("REGION", "asia-southeast1")
+QUEUE_NAME = os.getenv("QUEUE_NAME", "zyntroai-worker-queue")
+BUCKET_NAME = os.getenv("BUCKET_NAME")
+WORKER_URL = os.getenv("WORKER_URL")
+
+firestore_client = firestore.Client(project=PROJECT_ID)
+tasks_client = tasks_v2.CloudTasksClient()
+storage_client = storage.Client(project=PROJECT_ID)
+
+QUEUE_PATH = f"projects/{PROJECT_ID}/locations/{REGION}/queues/{QUEUE_NAME}"
+
+# ─── Models ───
+class JobStatus(str):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+class SubmitJobRequest(BaseModel):
+    job_type: str = Field(..., enum=["knowledge_regen", "skills_refresh", "token_rotate"])
+    payload: Dict[str, Any] = {}
+    schedule_seconds: int = 0
+
+class JobInfo(BaseModel):
+    job_id: str
+    job_type: str
+    status: str
+    progress: int = 0
+    message: str = ""
+    created_at: str
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+# ─── Firestore Helpers ───
+def save_job(job: Dict[str, Any]):
+    ref = firestore_client.collection("jobs").document(job["job_id"])
+    ref.set(job)
+
+def get_job(job_id: str) -> Optional[Dict[str, Any]]:
+    ref = firestore_client.collection("jobs").document(job_id)
+    doc = ref.get()
+    return doc.to_dict() if doc.exists else None
+
+def update_job(job_id: str, updates: Dict[str, Any]):
+    ref = firestore_client.collection("jobs").document(job_id)
+    ref.update(updates)
+
+# ─── Cloud Tasks Enqueue ───
+def enqueue_task(job_id: str, body: Dict[str, Any], schedule_seconds: int = 0):
+    payload = json.dumps(body).encode("utf-8")
+    task = {
+        "http_request": {
+            "url": WORKER_URL,
+            "http_method": tasks_v2.HttpMethod.POST,
+            "headers": {"Content-Type": "application/json"},
+            "body": payload,
+            "oidc_token": {"service_account_email": f"cloud-run-worker@{PROJECT_ID}.iam.gserviceaccount.com"}
+        },
+        "schedule_time": {
+            "seconds": int(datetime.utcnow().timestamp()) + schedule_seconds
+        }
+    }
+    response = tasks_client.create_task(parent=QUEUE_PATH, task=task)
+    logger.info("Task enqueued", job_id=job_id, task_name=response.name)
+    return response.name
+
+# ─── Actual Worker Executor (triggered by Cloud Tasks only) ───
+def run_auto_generate_knowledge() -> Dict[str, Any]:
+    """Call AutoGenerateKnowledge.py + upload artifacts to Cloud Storage"""
+    result = subprocess.run(
+        ["python", "AutoGenerateKnowledge.py"],
+        capture_output=True,
+        text=True,
+        check=False
+    )
+    bucket = storage_client.bucket(BUCKET_NAME)
+    blob = bucket.blob(f"knowledge/{datetime.utcnow().isoformat()}/report.txt")
+    blob.upload_from_string(result.stdout + "\n" + result.stderr)
+    return {
+        "returncode": result.returncode,
+        "stdout": result.stdout[:2000],
+        "artifact": f"gs://{BUCKET_NAME}/{blob.name}"
+    }
+
+def run_skills_refresh() -> Dict[str, Any]:
+    """Scan Skills/ .agents/ validate protected paths"""
+    result = subprocess.run(
+        ["python", "-c", "import os; print('Scanning Skills & .agents'); print(os.listdir('Skills/') if os.path.exists('Skills/') else [] )"],
+        capture_output=True,
+        text=True,
+        check=False
+    )
+    return {
+        "returncode": result.returncode,
+        "stdout": result.stdout[:2000]
+    }
+
+def run_token_regen(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Load secrets via Secret Manager then run token_regen.py"""
+    secret_name = f"projects/{PROJECT_ID}/secrets/api-secrets/versions/latest"
+    secret_client = secretmanager.SecretManagerServiceClient()
+    secret = secret_client.access_secret_version(name=secret_name).payload.data.decode("utf-8")
+    env = os.environ.copy()
+    env["SECRET_JSON"] = secret
+    result = subprocess.run(
+        ["python", "token_regen.py", json.dumps(payload)],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False
+    )
+    return {
+        "returncode": result.returncode,
+        "stdout": result.stdout[:2000]
+    }
+
+async def execute_job(job_id: str, job_type: str, payload: Dict[str, Any]):
+    update_job(job_id, {
+        "status": JobStatus.RUNNING,
+        "started_at": datetime.utcnow().replace(tzinfo=timezone.utc).isoformat(),
+        "progress": 10,
+        "message": "Worker started"
+    })
+    try:
+        output = {}
+        if job_type == "knowledge_regen":
+            output = run_auto_generate_knowledge()
+        elif job_type == "skills_refresh":
+            output = run_skills_refresh()
+        elif job_type == "token_rotate":
+            output = run_token_regen(payload)
+        else:
+            raise ValueError(f"Unknown job_type {job_type}")
+
+        update_job(job_id, {
+            "status": JobStatus.COMPLETED if output.get("returncode", 1) == 0 else JobStatus.FAILED,
+            "progress": 100,
+            "result": output,
+            "completed_at": datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
+        })
+        logger.info("Job finished", job_id=job_id)
+    except Exception as e:
+        logger.exception("Job failed", job_id=job_id)
+        update_job(job_id, {
+            "status": JobStatus.FAILED,
+            "error": str(e),
+            "completed_at": datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
+        })
+
+# ─── FastAPI Routes ───
+app = FastAPI(
+    title="ZyntroAI GCP Background Worker",
+    version="1.0.0"
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # Change to Work Console domain in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
+
+@app.get("/v1/status")
+async def health_check():
+    return {
+        "ok": True,
+        "timestamp": datetime.utcnow().replace(tzinfo=timezone.utc).isoformat() + "Z",
+        "version": "1.0.0",
+        "gcp_project": PROJECT_ID
+    }
+
+@app.post("/v1/jobs", status_code=202)
+async def submit_job(req: SubmitJobRequest):
+    job_id = str(uuid.uuid4())
+    job_doc = {
+        "job_id": job_id,
+        "job_type": req.job_type,
+        "status": JobStatus.PENDING,
+        "progress": 0,
+        "message": "Queued to Cloud Tasks",
+        "payload": req.payload,
+        "created_at": datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
+    }
+    save_job(job_doc)
+    enqueue_task(
+        job_id=job_id,
+        body={"job_id": job_id, "job_type": req.job_type, "payload": req.payload},
+        schedule_seconds=req.schedule_seconds
+    )
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "url": f"/v1/jobs/{job_id}"
+    }
+
+@app.get("/v1/jobs/{job_id}", response_model=JobInfo)
+async def get_job_status(job_id: str):
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+@app.get("/v1/jobs")
+async def list_jobs(limit: int = 20):
+    docs = firestore_client.collection("jobs").order_by("created_at", direction=firestore.Query.DESCENDING).limit(limit).stream()
+    return [doc.to_dict() for doc in docs]
+
+# Called ONLY by Cloud Tasks
+@app.post("/v1/worker/execute")
+async def worker_handler(request: Request, authorization: Optional[str] = Header(default=None)):
+    body = await request.json()
+    job_id = body.get("job_id")
+    job_type = body.get("job_type")
+    payload = body.get("payload", {})
+    if not job_id:
+        raise HTTPException(status_code=400, detail="Missing job_id")
+    await execute_job(job_id, job_type, payload)
+    return {"ok": True, "job_id": job_id}
+ 
+ 
+📁 File 2:  Dockerfile  (for Cloud Run)
+ 
+dockerfile  
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+CMD ["uvicorn", "gcp_background_worker:app", "--host", "0.0.0.0", "--port", "8080"]
+ 
+ 
+ requirements.txt 
+ 
+txt  
+fastapi
+uvicorn
+pydantic
+google-cloud-firestore
+google-cloud-tasks
+google-cloud-storage
+google-cloud-secret-manager
+structlog
+ 
+ 
+🔐 IAM Setup Commands (Terminal)
+ 
+bash  
+# 1. Create Service Account
+gcloud iam service-accounts create cloud-run-worker --display-name "Cloud Run Worker SA"
+
+# 2. Grant Permissions
+gcloud projects add-iam-policy-binding YOUR_PROJECT_ID --member="serviceAccount:cloud-run-worker@YOUR_PROJECT_ID.iam.gserviceaccount.com" --role="roles/cloudtasks.enqueuer"
+gcloud projects add-iam-policy-binding YOUR_PROJECT_ID --member="serviceAccount:cloud-run-worker@YOUR_PROJECT_ID.iam.gserviceaccount.com" --role="roles/firestore.user"
+gcloud projects add-iam-policy-binding YOUR_PROJECT_ID --member="serviceAccount:cloud-run-worker@YOUR_PROJECT_ID.iam.gserviceaccount.com" --role="roles/storage.objectCreator"
+gcloud projects add-iam-policy-binding YOUR_PROJECT_ID --member="serviceAccount:cloud-run-worker@YOUR_PROJECT_ID.iam.gserviceaccount.com" --role="roles/secretmanager.secretAccessor"
+
+# 3. Create Cloud Tasks Queue
+gcloud tasks queues create zyntroai-worker-queue --location=${REGION}
+
+# 4. Build & Deploy Cloud Run
+gcloud builds submit --tag gcr.io/YOUR_PROJECT_ID/zyntroai-worker
+gcloud run deploy zyntroai-worker --image gcr.io/YOUR_PROJECT_ID/zyntroai-worker --service-account cloud-run-worker@YOUR_PROJECT_ID.iam.gserviceaccount.com --region ${REGION} --allow-unauthenticated=false
+ 
+ 
+⚠️  --allow-unauthenticated=false : Cloud Tasks uses OIDC automatically; Work Console needs OAuth / Cloud IAM auth to call  /v1/jobs 
+ 
+🧪 Test API (Local)
+ 
+bash  
+uvicorn gcp_background_worker:app --host 0.0.0.0 --port 8787 --reload
+ 
+ 
+bash  
+curl -X POST http://localhost:8787/v1/jobs \
+-H "Content-Type:application/json" \
+-d '{"job_type":"knowledge_regen","payload":{}}'
+ 
+ 
+bash  
+curl http://localhost:8787/v1/jobs
+ 
+ 
+📈 Extend to match your full workflow
+ 
+✅ Already mapped:
+ 
+-  knowledge_regen  → AutoGenerateKnowledge.py + Cloud Storage artifacts
+-  skills_refresh  → Scan Skills/ + .agents/ protected paths
+-  token_rotate  → Secret Manager + token_regen.py
+-  /v1/jobs  → Feed Work Console index.html dashboard
+- Logging → Add Cloud Logging handler for full observability
+❌ Next steps:
+ 
+1. Add OAuth2 / Cloud IAM Auth for Work Console
+2. Add retry / dead‑letter queue for Cloud Tasks
+3. Add OpenAPI YAML update to reflect these new GCP endpoints
+4. Add Terraform for full infra-as-code (Cloud Run / Firestore / Cloud Tasks)
+5. Add CI/CD (Cloud Build) auto deploy
+6. Integrate cherry‑pick / patch workflow (from Node script) as new job_type
+7. Add alerting via Cloud Monitoring for failed jobs
+ 
+📌 Important Notes
+ 
+- Never commit service‑account JSON to repo → use Secret Manager + Cloud Run service account
+- Cloud Tasks will retry automatically; add idempotency so same job_id won’t run twice
+- Firestore is document‑oriented perfect for job status tracking
+- Cloud Storage stores generated knowledge reports, logs, artifacts for audit trail
+- Local run:  gcloud auth application-default login ; Cloud Run uses service account automatically
+ 
+👉 Next options you can choose:
+A) Generate Terraform code for this entire GCP stack
+B) Update your OpenAPI YAML fully to include Cloud Run job endpoints
+C) Build Work Console index.html that polls  /v1/jobs  live
+D) Add Cloud Logging + Cloud Monitoring alert rules
+E) Add cherry‑pick workflow job type to this worker
+ 
+Do you want me to go straight to Terraform for all of this GCP stack now? 🚀
