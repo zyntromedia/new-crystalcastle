@@ -75,20 +75,26 @@ new-crystalcastle/
         └── ci.yml           # 🤖 CI Pipeline
  
  
+
  
  
 🚀 เริ่มใช้งาน
  
 1️⃣ ติดตั้ง
- 
+ pip install fastapi uvicorn pydantic
+python main.py
+# → http://localhost:8787/  (Swagger UI)
+# → http://localhost:8787/v1/jobs  (JSON status feed)
 bash  
 # Clone repository
 git clone https://github.com/zyntromedia/new-crystalcastle.git
 cd new-crystalcastle
 
-# ติดตั้ง dependencies พร้อมเครื่องมือพัฒนา
-pip install -e ".[dev]"
- 
+
+ pip install fastapi uvicorn pydantic
+python main.py
+# → http://localhost:8787/  (Swagger UI)
+# → http://localhost:8787/v1/jobs  (JSON status feed)
  
 2️⃣ กำหนดสภาพแวดล้อม
  
